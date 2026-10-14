@@ -6,7 +6,7 @@
   <title>Smart Queue Display</title>
   
   <!-- Load Socket.io -->
-  <script src="http://localhost:5000/socket.io/socket.io.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
   
   <!-- Load Premium Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
@@ -112,13 +112,13 @@
   </div>
 
   <script>
-    const socket = io("http://localhost:5000"); 
+    const socket = io(); 
 
     socket.on('stateUpdated', (state) => {
       const tokenEl = document.getElementById('tokenDisplay');
       const glowEl = document.getElementById('backgroundGlow');
 
-      tokenEl.innerText = state.token;
+      tokenEl.innerText = (state.currentlyServing !== undefined && state.currentlyServing !== 0) ? state.currentlyServing : (state.token || '--');
       
       // Toggle CSS classes instead of hardcoding colors for richer effects
       if(state.isPaused) {

@@ -194,6 +194,7 @@ app.post('/increment', async (req, res) => {
 
 app.use(express.static(__dirname));
 
-server.listen(5000, '0.0.0.0', () => {
-  console.log(`🚀 Smart Server running on port 5000...`);
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Smart Server running on port ${PORT}...`);
 });
