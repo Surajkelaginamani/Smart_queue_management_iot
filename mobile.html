@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Smart Queue - Student View</title>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            /* safe-area insets for iPhone notch / home bar */
+            padding: max(20px, env(safe-area-inset-top))
+                     max(16px, env(safe-area-inset-right))
+                     max(20px, env(safe-area-inset-bottom))
+                     max(16px, env(safe-area-inset-left));
+            font-family: 'Poppins', sans-serif;
+            background: #0f172a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            /* 100dvh respects the collapsible browser bar on mobile */
+            min-height: 100dvh;
+            text-align: center;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 36px 22px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        h1 {
+            font-size: clamp(1.2rem, 5vw, 1.6rem);
+            color: #94a3b8;
+            margin: 0 0 20px 0;
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.35);
+            color: white;
+            /* 16px minimum prevents iOS from auto-zooming the page on input focus */
+            font-size: 16px;
+            font-family: 'Poppins', sans-serif;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .input-field::placeholder { color: rgba(255,255,255,0.35); }
+        .input-field:focus { border-color: #00ff88; }
+
+        #joinBtn {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+            border: none;
+            padding: 16px 20px;
+            border-radius: 50px;
+            font-size: clamp(1rem, 4vw, 1.15rem);
+            font-weight: 800;
+            width: 100%;
+            cursor: pointer;
+            box-shadow: 0 10px 20px rgba(0, 255, 136, 0.3);
+            transition: transform 0.2s;
+            touch-action: manipulation;
+        }
+
+        #joinBtn:active { transform: scale(0.95); }
+
+        #statusArea { display: none; }
+
+        .student-greeting {
+            font-size: clamp(1rem, 4vw, 1.1rem);
+            color: #38bdf8;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .my-token-label {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            margin-bottom: 4px;
+        }
+
+        .my-token-number {
+            font-size: clamp(3.8rem, 20vw, 5rem);
+            font-weight: 800;
+            margin: 0;
+            color: #fff;
+            line-height: 1;
+        }
+
+        .waiting-info {
+            margin-top: 22px;
+            padding: 16px;
+            border-radius: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            min-height: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .alert-turn {
+            color: #00ff88;
+            font-size: clamp(1.1rem, 5vw, 1.4rem);
+            font-weight: 800;
+            animation: pulse 1s infinite alternate;
+        }
+
+        .btn-reset {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 12px 22px;
+            border-radius: 10px;
+            margin-top: 14px;
+            cursor: pointer;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.9rem;
+            touch-action: manipulation;
+            width: 100%;
+        }
+
+        @keyframes pulse {
+            from { text-shadow: 0 0 10px rgba(0, 255, 136, 0.5); }
+            to   { text-shadow: 0 0 30px rgba(0, 255, 136, 1); }
+        }
+
+        /* Small phones — extra compact */
+        @media (max-width: 360px) {
+            .card { padding: 28px 16px; }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+        <h1>Sanjivani Admin</h1>
+
+        <div id="joinForm">
+            <input type="text" id="custNameInput" class="input-field" placeholder="Enter your full name" required>
+            <button id="joinBtn" onclick="joinQueue()">Join Digital Queue</button>
+        </div>
+
+        <div id="statusArea">
+            <div class="student-greeting" id="studentGreeting">Hello, Student</div>
+            <div class="my-token-label">Your Token Number</div>
+            <p class="my-token-number" id="myTokenDisplay">--</p>
+
+            <div class="waiting-info" id="waitingInfo">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const serverUrl = window.location.origin;
+        const socket = io(serverUrl);
+
+        let myTokenId = localStorage.getItem('smartQueueToken');
+        let myStoredName = localStorage.getItem('smartQueueName');
+
+        // Register Service Worker for notifications and session recovery
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('Service Worker registered:', reg.scope))
+                    .catch(err => console.error('Service Worker registration failed:', err));
+            });
+        }
+
+        if (myTokenId) {
+            myTokenId = parseInt(myTokenId);
+            document.getElementById('joinForm').style.display = 'none';
+            document.getElementById('statusArea').style.display = 'block';
+            document.getElementById('studentGreeting').innerText = `Hello, ${myStoredName || 'Student'}`;
+            document.getElementById('myTokenDisplay').innerText = myTokenId;
+        }
+
+        // UI update function handling queue status & estimated wait time
+        function updateUI(position) {
+            const waitingInfoBox = document.getElementById('waitingInfo');
+
+            if (position === -1) {
+                // User's turn: Estimated wait time element disappears, alert displayed
+                waitingInfoBox.innerHTML = `<div class="alert-turn">IT'S YOUR TURN!<br><span style="font-size:1rem; color:#fff;">Please proceed to the counter.</span></div>`;
+            } else if (position !== null && position !== undefined && position >= 0) {
+                let estWaitHtml = '';
+                // Check if currently waiting in queue (position > 0)
+                if (position > 0) {
+                    const estTime = position * 3; // 3 minutes per student
+                    estWaitHtml = `<div style="margin-top: 10px; font-size: 0.95rem; color: #fbbf24; font-weight: 500; background: rgba(251, 191, 36, 0.1); padding: 8px; border-radius: 8px;">⏳ Estimated Wait: ~${estTime} mins</div>`;
+                }
+                waitingInfoBox.innerHTML = `
+                    <span style="color: #94a3b8;">People Ahead of You:</span><br>
+                    <strong style="font-size: 2rem;">${position}</strong>
+                    ${estWaitHtml}
+                `;
+            } else {
+                waitingInfoBox.innerHTML = `
+                    <span style="color:#ff4444; font-size: 1.2rem; font-weight: 600;">Your turn has passed.</span>
+                    <button class="btn-reset" onclick="leaveQueue()">Join Queue Again</button>
+                `;
+            }
+        }
+
+        async function joinQueue() {
+            const nameInput = document.getElementById('custNameInput');
+            const enteredName = nameInput.value.trim();
+
+            if (!enteredName) {
+                alert("Please enter your name before joining.");
+                nameInput.focus();
+                return;
+            }
+
+            try {
+                const response = await fetch(`${serverUrl}/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: enteredName, subscription: null })
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    myTokenId = data.token;
+                    myStoredName = data.name;
+
+                    localStorage.setItem('smartQueueToken', myTokenId);
+                    localStorage.setItem('smartQueueName', myStoredName);
+
+                    document.getElementById('joinForm').style.display = 'none';
+                    document.getElementById('statusArea').style.display = 'block';
+                    document.getElementById('studentGreeting').innerText = `Hello, ${myStoredName}`;
+                    document.getElementById('myTokenDisplay').innerText = myTokenId;
+
+                    updateUI(data.peopleAhead);
+                } else {
+                    alert(data.message);
+                }
+            } catch (err) {
+                alert("Failed to connect to the server.");
+            }
+        }
+
+        function leaveQueue() {
+            localStorage.removeItem('smartQueueToken');
+            localStorage.removeItem('smartQueueName');
+            location.reload();
+        }
+
+        socket.on('stateUpdated', (state) => {
+            if (!myTokenId) return;
+
+            if (state.currentlyServing === myTokenId) {
+                updateUI(-1);
+            } else {
+                const queueIndex = state.waitingList.findIndex(item => item.token === myTokenId);
+                if (queueIndex !== -1) {
+                    updateUI(queueIndex);
+                } else {
+                    updateUI(null);
+                }
+            }
+        });
+    </script>
+
+</body>
+
+</html>
