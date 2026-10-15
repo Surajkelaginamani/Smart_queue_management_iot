@@ -24,9 +24,10 @@ self.addEventListener('push', function(event) {
   const options = {
     body: data.body || 'Please check your queue status.',
     icon: 'https://cdn-icons-png.flaticon.com/512/1828/1828970.png',
-    vibrate: [200, 100, 200],
+    badge: 'https://cdn-icons-png.flaticon.com/512/1828/1828970.png',
+    vibrate: [300, 100, 300, 100, 300],
     requireInteraction: true,
-    data: { url: '/' } // Task 1 requirement: added data: { url: '/' }
+    data: { url: (data && data.url) ? data.url : '/mobile.html' }
   };
 
   event.waitUntil(
@@ -34,23 +35,20 @@ self.addEventListener('push', function(event) {
   );
 });
 
-// Service Worker: Notification Click Recovery (Task 1)
+// Service Worker: Notification Click Recovery
 self.addEventListener('notificationclick', function(event) {
-  // 1. Close notification
   event.notification.close();
 
-  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/mobile.html';
 
-  // 2. Check if a tab is already open using clients.matchAll({ type: 'window' })
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
-        if ('focus' in client) {
+        if (client.url && client.url.includes('mobile.html') && 'focus' in client) {
           return client.focus();
         }
       }
-      // If no tab is open, open a new one
       if (clients.openWindow) {
         return clients.openWindow(targetUrl);
       }

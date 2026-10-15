@@ -7,14 +7,13 @@
     <title>Smart Queue - Student View</title>
 
     <script src="/socket.io/socket.io.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
         *, *::before, *::after { box-sizing: border-box; }
 
         body {
             margin: 0;
-            /* safe-area insets for iPhone notch / home bar */
             padding: max(20px, env(safe-area-inset-top))
                      max(16px, env(safe-area-inset-right))
                      max(20px, env(safe-area-inset-bottom))
@@ -26,7 +25,6 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            /* 100dvh respects the collapsible browser bar on mobile */
             min-height: 100dvh;
             text-align: center;
         }
@@ -57,7 +55,6 @@
             border: 1px solid rgba(255, 255, 255, 0.15);
             background: rgba(0, 0, 0, 0.35);
             color: white;
-            /* 16px minimum prevents iOS from auto-zooming the page on input focus */
             font-size: 16px;
             font-family: 'Poppins', sans-serif;
             outline: none;
@@ -83,6 +80,7 @@
         }
 
         #joinBtn:active { transform: scale(0.95); }
+        #joinBtn:disabled { opacity: 0.6; cursor: not-allowed; }
 
         #statusArea { display: none; }
 
@@ -139,12 +137,72 @@
             width: 100%;
         }
 
+        /* Notification Status Card */
+        .notif-card {
+            margin-top: 16px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+
+        .notif-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .notif-status.active {
+            color: #00ff88;
+        }
+
+        .notif-status.blocked {
+            color: #f87171;
+        }
+
+        .btn-notif-action {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: 'Poppins', sans-serif;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+            touch-action: manipulation;
+        }
+
+        .btn-notif-action:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-notif-action.btn-enable {
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+            border: none;
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.35);
+        }
+
+        .btn-notif-action:active {
+            transform: scale(0.96);
+        }
+
         @keyframes pulse {
             from { text-shadow: 0 0 10px rgba(0, 255, 136, 0.5); }
             to   { text-shadow: 0 0 30px rgba(0, 255, 136, 1); }
         }
 
-        /* Small phones — extra compact */
         @media (max-width: 360px) {
             .card { padding: 28px 16px; }
         }
@@ -159,6 +217,13 @@
         <div id="joinForm">
             <input type="text" id="custNameInput" class="input-field" placeholder="Enter your full name" required>
             <button id="joinBtn" onclick="joinQueue()">Join Digital Queue</button>
+
+            <div class="notif-card" id="joinNotifCard">
+                <div class="notif-status" id="joinNotifStatus">
+                    <span>🔔</span>
+                    <span id="joinNotifText">Alert permission requested upon joining.</span>
+                </div>
+            </div>
         </div>
 
         <div id="statusArea">
@@ -166,7 +231,14 @@
             <div class="my-token-label">Your Token Number</div>
             <p class="my-token-number" id="myTokenDisplay">--</p>
 
-            <div class="waiting-info" id="waitingInfo">
+            <div class="waiting-info" id="waitingInfo"></div>
+
+            <div class="notif-card" id="statusNotifCard">
+                <div class="notif-status" id="statusNotifStatus">
+                    <span>🔔</span>
+                    <span id="statusNotifText">Checking notifications...</span>
+                </div>
+                <div id="statusNotifAction"></div>
             </div>
         </div>
     </div>
@@ -177,16 +249,21 @@
 
         let myTokenId = localStorage.getItem('smartQueueToken');
         let myStoredName = localStorage.getItem('smartQueueName');
+        let hasAlertedForThisTurn = false;
 
-        // Register Service Worker for notifications and session recovery
+        // Register Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
-                    .then(reg => console.log('Service Worker registered:', reg.scope))
+                    .then(reg => {
+                        console.log('Service Worker registered:', reg.scope);
+                        updateNotificationUI();
+                    })
                     .catch(err => console.error('Service Worker registration failed:', err));
             });
         }
 
+        // Check stored session
         if (myTokenId) {
             myTokenId = parseInt(myTokenId);
             document.getElementById('joinForm').style.display = 'none';
@@ -195,18 +272,221 @@
             document.getElementById('myTokenDisplay').innerText = myTokenId;
         }
 
+        // Convert base64 VAPID public key
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding)
+                .replace(/\-/g, '+')
+                .replace(/_/g, '/');
+
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        // Get or create Push Subscription via Service Worker
+        async function getOrRegisterPushSubscription() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                console.log('Web Push not supported in this browser.');
+                return null;
+            }
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                let sub = await reg.pushManager.getSubscription();
+                if (sub) return sub;
+
+                const res = await fetch(`${serverUrl}/vapid-public-key`);
+                const { publicKey } = await res.json();
+                if (!publicKey) return null;
+
+                const convertedKey = urlBase64ToUint8Array(publicKey);
+                sub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: convertedKey
+                });
+                return sub;
+            } catch (err) {
+                console.error('Failed to get push subscription:', err);
+                return null;
+            }
+        }
+
+        // Request notification permission and sync subscription
+        async function requestNotificationPermission() {
+            if (!('Notification' in window)) {
+                alert('Notifications are not supported on this browser.');
+                return null;
+            }
+
+            try {
+                const permission = await Notification.requestPermission();
+                updateNotificationUI();
+
+                if (permission === 'granted') {
+                    const sub = await getOrRegisterPushSubscription();
+                    if (sub && myTokenId) {
+                        await fetch(`${serverUrl}/subscribe`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ token: myTokenId, subscription: sub })
+                        });
+                    }
+                    return sub;
+                } else if (permission === 'denied') {
+                    alert('Notifications are blocked. Please enable notifications for this site in your browser site settings.');
+                }
+            } catch (err) {
+                console.error('Permission request error:', err);
+            }
+            return null;
+        }
+
+        // Send a test notification
+        async function sendTestNotification() {
+            playTurnChime();
+            if ('vibrate' in navigator) navigator.vibrate([250, 100, 250]);
+
+            if (!('Notification' in window) || Notification.permission !== 'granted') {
+                await requestNotificationPermission();
+                return;
+            }
+
+            try {
+                const sub = await getOrRegisterPushSubscription();
+                if (!sub) {
+                    alert('Push subscription could not be retrieved.');
+                    return;
+                }
+
+                const res = await fetch(`${serverUrl}/test-notification`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subscription: sub })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('🔔 Test notification sent! Check your notification shade / lock screen.');
+                } else {
+                    alert('Test error: ' + (data.message || data.error));
+                }
+            } catch (err) {
+                alert('Failed to send test alert: ' + err.message);
+            }
+        }
+
+        // Update notification UI elements
+        function updateNotificationUI() {
+            const statusNotifText = document.getElementById('statusNotifText');
+            const statusNotifAction = document.getElementById('statusNotifAction');
+            const statusNotifStatus = document.getElementById('statusNotifStatus');
+            const joinNotifText = document.getElementById('joinNotifText');
+
+            if (!('Notification' in window)) {
+                if (statusNotifText) statusNotifText.innerText = "Browser doesn't support Web Push";
+                if (joinNotifText) joinNotifText.innerText = "Keep this page open for sound alerts.";
+                return;
+            }
+
+            if (Notification.permission === 'granted') {
+                if (joinNotifText) {
+                    joinNotifText.innerHTML = "<span style='color:#00ff88;'>✅ Push notifications enabled</span>";
+                }
+                if (statusNotifStatus) statusNotifStatus.className = 'notif-status active';
+                if (statusNotifText) statusNotifText.innerText = 'Push Alerts Active';
+                if (statusNotifAction) {
+                    statusNotifAction.innerHTML = `<button class="btn-notif-action" onclick="sendTestNotification()">Test Alert</button>`;
+                }
+            } else if (Notification.permission === 'denied') {
+                if (joinNotifText) {
+                    joinNotifText.innerHTML = "<span style='color:#f87171;'>⚠️ Notifications blocked in browser</span>";
+                }
+                if (statusNotifStatus) statusNotifStatus.className = 'notif-status blocked';
+                if (statusNotifText) statusNotifText.innerText = 'Notifications blocked';
+                if (statusNotifAction) {
+                    statusNotifAction.innerHTML = `<button class="btn-notif-action" onclick="alert('Please unblock notifications for this site in your browser site settings.')">How to enable?</button>`;
+                }
+            } else {
+                if (joinNotifText) {
+                    joinNotifText.innerText = "Alert permission requested upon joining.";
+                }
+                if (statusNotifStatus) statusNotifStatus.className = 'notif-status';
+                if (statusNotifText) statusNotifText.innerText = 'Alerts not active';
+                if (statusNotifAction) {
+                    statusNotifAction.innerHTML = `<button class="btn-notif-action btn-enable" onclick="requestNotificationPermission()">Enable Alerts</button>`;
+                }
+            }
+        }
+
+        // Sound chime for user's turn
+        function playTurnChime() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const now = ctx.currentTime;
+                
+                const playTone = (freq, start, duration) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, start);
+                    gain.gain.setValueAtTime(0.4, start);
+                    gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(start);
+                    osc.stop(start + duration);
+                };
+
+                playTone(523.25, now, 0.4);       // C5
+                playTone(659.25, now + 0.15, 0.4); // E5
+                playTone(783.99, now + 0.30, 0.6); // G5
+                playTone(1046.50, now + 0.45, 0.9); // C6
+            } catch (e) {
+                console.warn('AudioContext playback error:', e);
+            }
+        }
+
+        // Trigger turn alert (sound, vibrate, in-tab notification)
+        function triggerTurnAlert() {
+            if (hasAlertedForThisTurn) return;
+            hasAlertedForThisTurn = true;
+
+            playTurnChime();
+
+            if ('vibrate' in navigator) {
+                navigator.vibrate([400, 150, 400, 150, 600]);
+            }
+
+            if ('Notification' in window && Notification.permission === 'granted') {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.ready.then(reg => {
+                        reg.showNotification("It's your turn!", {
+                            body: `${myStoredName || 'Student'}, please proceed to the counter.`,
+                            icon: 'https://cdn-icons-png.flaticon.com/512/1828/1828970.png',
+                            vibrate: [400, 150, 400, 150, 600],
+                            requireInteraction: true,
+                            data: { url: '/mobile.html' }
+                        });
+                    });
+                }
+            }
+        }
+
         // UI update function handling queue status & estimated wait time
         function updateUI(position) {
             const waitingInfoBox = document.getElementById('waitingInfo');
 
             if (position === -1) {
-                // User's turn: Estimated wait time element disappears, alert displayed
+                triggerTurnAlert();
                 waitingInfoBox.innerHTML = `<div class="alert-turn">IT'S YOUR TURN!<br><span style="font-size:1rem; color:#fff;">Please proceed to the counter.</span></div>`;
             } else if (position !== null && position !== undefined && position >= 0) {
+                hasAlertedForThisTurn = false;
                 let estWaitHtml = '';
-                // Check if currently waiting in queue (position > 0)
                 if (position > 0) {
-                    const estTime = position * 3; // 3 minutes per student
+                    const estTime = position * 3;
                     estWaitHtml = `<div style="margin-top: 10px; font-size: 0.95rem; color: #fbbf24; font-weight: 500; background: rgba(251, 191, 36, 0.1); padding: 8px; border-radius: 8px;">⏳ Estimated Wait: ~${estTime} mins</div>`;
                 }
                 waitingInfoBox.innerHTML = `
@@ -215,6 +495,7 @@
                     ${estWaitHtml}
                 `;
             } else {
+                hasAlertedForThisTurn = false;
                 waitingInfoBox.innerHTML = `
                     <span style="color:#ff4444; font-size: 1.2rem; font-weight: 600;">Your turn has passed.</span>
                     <button class="btn-reset" onclick="leaveQueue()">Join Queue Again</button>
@@ -222,6 +503,7 @@
             }
         }
 
+        // Join Queue with permission prompt
         async function joinQueue() {
             const nameInput = document.getElementById('custNameInput');
             const enteredName = nameInput.value.trim();
@@ -232,11 +514,30 @@
                 return;
             }
 
+            const joinBtn = document.getElementById('joinBtn');
+            joinBtn.disabled = true;
+            joinBtn.innerText = "Joining Queue...";
+
+            // Trigger permission request on click user-gesture
+            let pushSub = null;
+            if ('Notification' in window) {
+                if (Notification.permission === 'default') {
+                    try {
+                        await Notification.requestPermission();
+                    } catch (err) {
+                        console.warn('Permission prompt error:', err);
+                    }
+                }
+                if (Notification.permission === 'granted') {
+                    pushSub = await getOrRegisterPushSubscription();
+                }
+            }
+
             try {
                 const response = await fetch(`${serverUrl}/join`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: enteredName, subscription: null })
+                    body: JSON.stringify({ name: enteredName, subscription: pushSub })
                 });
                 const data = await response.json();
 
@@ -252,12 +553,16 @@
                     document.getElementById('studentGreeting').innerText = `Hello, ${myStoredName}`;
                     document.getElementById('myTokenDisplay').innerText = myTokenId;
 
+                    updateNotificationUI();
                     updateUI(data.peopleAhead);
                 } else {
                     alert(data.message);
                 }
             } catch (err) {
                 alert("Failed to connect to the server.");
+            } finally {
+                joinBtn.disabled = false;
+                joinBtn.innerText = "Join Digital Queue";
             }
         }
 
@@ -281,6 +586,9 @@
                 }
             }
         });
+
+        // Initial UI check
+        updateNotificationUI();
     </script>
 
 </body>
