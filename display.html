@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Queue Display</title>
+  
+  <!-- Load Socket.io -->
+  <script src="/socket.io/socket.io.js"></script>
+  
+  <!-- Load Premium Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+  
+  <style>
+    body { 
+      margin: 0;
+      padding: 0;
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      height: 100vh; 
+      font-family: 'Poppins', sans-serif; 
+      background: radial-gradient(circle at center, #1a1c29 0%, #0a0a0f 100%); /* Deep premium gradient */
+      color: white; 
+      overflow: hidden;
+    }
+
+    /* Ambient Background Glow */
+    .glow-orb {
+      position: absolute;
+      width: 700px;
+      height: 700px;
+      background: rgba(0, 255, 136, 0.05); /* Soft green ambient light */
+      border-radius: 50%;
+      filter: blur(120px);
+      z-index: -1;
+      transition: background 0.4s ease;
+    }
+
+    .glow-orb.paused {
+      background: rgba(255, 68, 68, 0.05); /* Soft red ambient light */
+    }
+
+    /* Frosted Glass Card */
+    .display-card {
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 30px;
+      padding: 60px 120px;
+      text-align: center;
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+      width: 90%;
+      max-width: 700px;
+      box-sizing: border-box;
+    }
+
+    h1 { 
+      font-size: clamp(1.1rem, 4vw, 2.5rem); 
+      font-weight: 600;
+      color: #94a3b8; 
+      text-transform: uppercase;
+      letter-spacing: clamp(2px, 1.5vw, 6px);
+      margin: 0 0 10px 0;
+    }
+
+    #tokenDisplay { 
+      /* Scales from 5rem on small phones up to 16rem on large screens */
+      font-size: clamp(5rem, 22vw, 16rem); 
+      font-weight: 800; 
+      margin: 0; 
+      line-height: 1;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
+    }
+
+    /* Dynamic Neon Text Styles */
+    .status-active {
+      color: #00ff88;
+      text-shadow: 0 0 40px rgba(0, 255, 136, 0.4), 0 0 10px rgba(0, 255, 136, 0.2);
+    }
+
+    .status-paused {
+      color: #ff4444;
+      text-shadow: 0 0 40px rgba(255, 68, 68, 0.4), 0 0 10px rgba(255, 68, 68, 0.2);
+    }
+
+    /* ── Mobile responsive overrides ── */
+    @media (max-width: 600px) {
+      .glow-orb {
+        width: 320px;
+        height: 320px;
+        filter: blur(60px);
+      }
+
+      .display-card {
+        padding: 36px 20px;
+        border-radius: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient light behind the card -->
+  <div class="glow-orb" id="backgroundGlow"></div>
+
+  <div class="display-card">
+    <h1>Now Serving</h1>
+    <p id="tokenDisplay" class="status-active">--</p>
+  </div>
+
+  <script>
+    const socket = io(); 
+
+    socket.on('stateUpdated', (state) => {
+      const tokenEl = document.getElementById('tokenDisplay');
+      const glowEl = document.getElementById('backgroundGlow');
+
+      tokenEl.innerText = (state.currentlyServing !== undefined && state.currentlyServing !== 0) ? state.currentlyServing : (state.token || '--');
+      
+      // Toggle CSS classes instead of hardcoding colors for richer effects
+      if(state.isPaused) {
+        tokenEl.className = "status-paused";
+        glowEl.className = "glow-orb paused";
+      } else {
+        tokenEl.className = "status-active";
+        glowEl.className = "glow-orb";
+      }
+    });
+  </script>
+
+</body>
+</html>
